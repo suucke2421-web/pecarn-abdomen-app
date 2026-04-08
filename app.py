@@ -3,7 +3,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from pathlib import Path
-from PIL import Image
 
 # =========================
 # ページ設定
@@ -195,21 +194,6 @@ def explain_prediction(df_input: pd.DataFrame, prob: float):
         "comments": comments,
     }
 
-def show_result_image(risk: str):
-    img_map = {
-        "低": "経過観察.png",
-        "中": "追加評価.png",
-        "高": "CT検討.png",
-    }
-
-    img_name = img_map.get(risk)
-    img_path = Path(__file__).parent / img_name
-
-    if img_path.is_file():
-        st.image(Image.open(img_path), use_container_width=True)
-    else:
-        st.caption(f"結果画像 {img_name} は未配置です。必要に応じて同じフォルダに追加してください。")
-
 # =========================
 # モデル読み込み
 # =========================
@@ -321,8 +305,6 @@ if st.button("判定する", use_container_width=True):
 
     st.markdown(f"<p class='{css_class}'>{risk}リスク</p>", unsafe_allow_html=True)
     st.info(comment)
-
-    show_result_image(risk)
 
     st.markdown("### 判定の根拠")
     st.write(f"**PECARN陽性項目**：{', '.join(explanation['positive_pecarn']) if explanation['positive_pecarn'] else 'なし'}")
