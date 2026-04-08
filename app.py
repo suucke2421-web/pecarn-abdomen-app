@@ -71,17 +71,17 @@ def to_float_or_nan(x):
     except Exception:
         return np.nan
 
-def compute_positive_count(row: pd.Series) -> int:
-    return int(
-        (row["AbdomenPain"] == 1) +
-        (row["VomitWretch"] == 1) +
-        (row["DecrBreathSound"] == 1) +
-        (row["AbdTrauma"] == 1) +
-        (row["AbdomenTender"] == 1) +
-        (row["ThoracicTrauma"] == 1) +
-        (row["SeatBeltSign"] == 1) +
-        (row["GCSScore"] < 14)
-    )
+def get_positive_pecarn_items(row: pd.Series) -> list[str]:
+    items = []
+
+    if row["GCSScore"] < 14:
+        items.append("GCS<14")
+
+    for key, label in PECARN_FIELDS:
+        if row[key] == 1:
+            items.append(label)
+
+    return items
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
     X = pd.DataFrame(index=df.index)
@@ -114,13 +114,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 def explain_prediction(df_input: pd.DataFrame):
     row = df_input.iloc[0]
 
-    positive_pecarn = []
-    if row["GCSScore"] < 14:
-        positive_pecarn.append("GCS<14")
-
-    for key, label in PECARN_FIELDS:
-        if row[key] == 1:
-            positive_pecarn.append(label)
+    positive_pecarn = get_positive_pecarn_items(row)
 
     unknown_pecarn = []
     for key, label in PECARN_FIELDS:
@@ -226,7 +220,9 @@ if st.button("判定する", use_container_width=True):
         row_data[key] = to_float_or_nan(lab_inputs[key])
 
     df_input = pd.DataFrame([row_data])
-    df_input["ACS"] = df_input.apply(compute_positive_count, axis=1)
+
+    positive_items = get_positive_pecarn_items(df_input.iloc[0])
+    df_input["ACS"] = len(positive_items)
 
     X = build_features(df_input)
 
@@ -264,4 +260,4 @@ if st.button("判定する", use_container_width=True):
     with st.expander("入力内容の確認"):
         st.dataframe(df_input.T, use_container_width=True)
 
-    st.caption("※ 本ツールは臨床判断を補助するものであり、最終判断は担当医が行ってください。")
+    st.caption("※本ツールは臨床判断を補助するものであり、最終判断は担当医が行ってください。")
