@@ -21,21 +21,6 @@ st.markdown("""
     font-size:22px !important;
     font-weight: bold;
 }
-.low-risk {
-    color: green;
-    font-size: 28px;
-    font-weight: bold;
-}
-.mid-risk {
-    color: orange;
-    font-size: 28px;
-    font-weight: bold;
-}
-.high-risk {
-    color: red;
-    font-size: 28px;
-    font-weight: bold;
-}
 .block {
     padding: 1rem;
     border-radius: 0.75rem;
@@ -86,7 +71,7 @@ def to_float_or_nan(x):
     except Exception:
         return np.nan
 
-def compute_acs(row: pd.Series) -> int:
+def compute_positive_count(row: pd.Series) -> int:
     return int(
         (row["AbdomenPain"] == 1) +
         (row["VomitWretch"] == 1) +
@@ -109,7 +94,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     X["RespRate"] = df["RespRate"]
     X["ShockIndex"] = df["ShockIndex"]
 
-    # ACS
+    # PECARN陽性数（内部特徴量名は学習済みモデルに合わせてACSのまま）
     X["ACS"] = df["ACS"]
 
     # PECARN個別項目
@@ -126,28 +111,13 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
     return X
 
-def classify(prob: float):
-    if prob < 0.01:
-        return "低", "low-risk", "IAIAI低リスクと考えられます。臨床経過と併せてご判断ください。"
-    elif prob < 0.05:
-        return "中", "mid-risk", "中間リスクです。身体所見・経過・採血所見を踏まえて追加評価をご検討ください。"
-    else:
-        return "高", "high-risk", "IAIAI高リスクが示唆されます。CTを含めた追加評価を積極的にご検討ください。"
-
-def final_message(risk: str) -> str:
-    if risk == "低":
-        return "CTは現時点で回避候補です"
-    elif risk == "中":
-        return "CT適応は追加評価を踏まえて判断してください"
-    else:
-        return "CTを積極的に検討してください"
-
-def explain_prediction(df_input: pd.DataFrame, prob: float):
+def explain_prediction(df_input: pd.DataFrame):
     row = df_input.iloc[0]
 
     positive_pecarn = []
     if row["GCSScore"] < 14:
         positive_pecarn.append("GCS<14")
+
     for key, label in PECARN_FIELDS:
         if row[key] == 1:
             positive_pecarn.append(label)
@@ -164,13 +134,6 @@ def explain_prediction(df_input: pd.DataFrame, prob: float):
 
     comments = []
 
-    if row["ACS"] >= 4:
-        comments.append("ACSが高く、高リスク群に該当します。")
-    elif row["ACS"] == 3:
-        comments.append("ACS=3でリスク上昇が示唆されます。")
-    else:
-        comments.append("ACSは0〜2であり、中間〜低リスク帯です。")
-
     if row["GCSScore"] < 14:
         comments.append("GCS低下はPECARNの重要所見です。")
 
@@ -179,13 +142,6 @@ def explain_prediction(df_input: pd.DataFrame, prob: float):
 
     if len(positive_pecarn) == 0:
         comments.append("PECARN陽性項目は認めません。")
-
-    if prob < 0.01:
-        comments.append("モデル上は低リスクです。")
-    elif prob < 0.05:
-        comments.append("モデル上は中間リスクです。")
-    else:
-        comments.append("モデル上は高リスクです。")
 
     return {
         "positive_pecarn": positive_pecarn,
@@ -211,7 +167,7 @@ bundle = load_bundle()
 # タイトル
 # =========================
 st.title("小児腹部鈍的外傷 意思決定支援ツール")
-st.markdown("#### Model C（ACS + PECARN個別 + 初期臨床情報 + 採血）")
+st.markdown("#### （PECARN陽性数 + PECARN個別 + 初期臨床情報 + 採血）")
 st.caption("IAIAI確率を補助的に表示し、CT適応判断の参考情報を提供します。")
 st.markdown("---")
 
@@ -222,7 +178,7 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("基本情報・バイタル")
-    age = st.number_input("年齢", min_value=0.0, max_value=18.0, value=10.0, step=0.1)
+    age = st.number_input("年齢", min_value=0, max_value=18, value=10, step=1)
     sex = st.selectbox("性別", ["男性", "女性"])
     sbp = st.number_input("収縮期血圧", min_value=20.0, max_value=250.0, value=110.0, step=1.0)
     pulse = st.number_input("脈拍", min_value=20.0, max_value=250.0, value=90.0, step=1.0)
@@ -270,7 +226,7 @@ if st.button("判定する", use_container_width=True):
         row_data[key] = to_float_or_nan(lab_inputs[key])
 
     df_input = pd.DataFrame([row_data])
-    df_input["ACS"] = df_input.apply(compute_acs, axis=1)
+    df_input["ACS"] = df_input.apply(compute_positive_count, axis=1)
 
     X = build_features(df_input)
 
@@ -284,36 +240,26 @@ if st.button("判定する", use_container_width=True):
     X[bundle["cols_to_scale"]] = bundle["scaler"].transform(X[bundle["cols_to_scale"]])
 
     prob = bundle["model"].predict_proba(X)[:, 1][0]
-    risk, css_class, comment = classify(prob)
-    explanation = explain_prediction(df_input, prob)
-    main_msg = final_message(risk)
+    explanation = explain_prediction(df_input)
 
     st.markdown("---")
-    st.subheader("最終判定")
+    st.subheader("判定結果")
 
-    if risk == "低":
-        st.success(main_msg)
-    elif risk == "中":
-        st.warning(main_msg)
-    else:
-        st.error(main_msg)
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("ACS", int(df_input["ACS"].iloc[0]))
+    c1, c2 = st.columns(2)
+    c1.metric("PECARN陽性数", int(df_input["ACS"].iloc[0]))
     c2.metric("IAIAI確率", f"{prob*100:.2f}%")
-    c3.metric("リスク分類", f"{risk}リスク")
 
-    st.markdown(f"<p class='{css_class}'>{risk}リスク</p>", unsafe_allow_html=True)
-    st.info(comment)
+    st.info("IAIAI確率は学習済みモデルによる予測値です。臨床経過や身体所見とあわせて解釈してください。")
 
     st.markdown("### 判定の根拠")
     st.write(f"**PECARN陽性項目**：{', '.join(explanation['positive_pecarn']) if explanation['positive_pecarn'] else 'なし'}")
     st.write(f"**PECARN不明項目**：{', '.join(explanation['unknown_pecarn']) if explanation['unknown_pecarn'] else 'なし'}")
     st.write(f"**未測定の採血**：{', '.join(explanation['missing_labs']) if explanation['missing_labs'] else 'なし'}")
 
-    st.markdown("**コメント**")
-    for txt in explanation["comments"]:
-        st.write(f"- {txt}")
+    if explanation["comments"]:
+        st.markdown("**コメント**")
+        for txt in explanation["comments"]:
+            st.write(f"- {txt}")
 
     with st.expander("入力内容の確認"):
         st.dataframe(df_input.T, use_container_width=True)
