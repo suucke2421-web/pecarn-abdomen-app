@@ -57,6 +57,8 @@ LAB_FIELDS = [
     ("HCO3", "HCO3"),
 ]
 
+CT_AVOID_NPV_THRESHOLD = 0.98  # IAIAIでない確率 98%
+
 # =========================
 # 関数
 # =========================
@@ -143,6 +145,20 @@ def explain_prediction(df_input: pd.DataFrame):
         "missing_labs": missing_labs,
         "comments": comments,
     }
+
+def get_ct_recommendation(prob: float):
+    no_iaiai_prob = 1.0 - prob
+
+    if no_iaiai_prob >= CT_AVOID_NPV_THRESHOLD:
+        return (
+            "CT回避候補",
+            f"IAIAIでない予測確率は {no_iaiai_prob*100:.1f}% で、98%以上です。現時点ではCT回避候補です。臨床経過や身体所見とあわせて判断してください。"
+        )
+    else:
+        return (
+            "CT追加評価・検討",
+            f"IAIAIでない予測確率は {no_iaiai_prob*100:.1f}% で、98%未満です。CTを含めた追加評価を検討してください。"
+        )
 
 # =========================
 # モデル読み込み
@@ -236,16 +252,24 @@ if st.button("判定する", use_container_width=True):
     X[bundle["cols_to_scale"]] = bundle["scaler"].transform(X[bundle["cols_to_scale"]])
 
     prob = bundle["model"].predict_proba(X)[:, 1][0]
+    no_iaiai_prob = 1.0 - prob
     explanation = explain_prediction(df_input)
+    decision_label, decision_message = get_ct_recommendation(prob)
 
     st.markdown("---")
     st.subheader("判定結果")
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     c1.metric("PECARN陽性数", int(df_input["ACS"].iloc[0]))
     c2.metric("IAIAI確率", f"{prob*100:.2f}%")
+    c3.metric("判定", decision_label)
 
-    st.info("IAIAI確率は学習済みモデルによる予測値です。臨床経過や身体所見とあわせて解釈してください。")
+    if decision_label == "CT回避候補":
+        st.success(decision_message)
+    else:
+        st.warning(decision_message)
+
+    st.caption(f"IAIAIでない予測確率: {no_iaiai_prob*100:.2f}%")
 
     st.markdown("### 判定の根拠")
     st.write(f"**PECARN陽性項目**：{', '.join(explanation['positive_pecarn']) if explanation['positive_pecarn'] else 'なし'}")
